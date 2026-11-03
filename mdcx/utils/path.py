@@ -24,7 +24,9 @@ def is_descendant(p: str | Path, parent: str | Path) -> bool:
     parent = os.path.realpath(parent, strict=os.path.ALLOW_MISSING)
     # parent = /foo/bar, p = /foo/barbar 使得简单的前缀判断失效
     # os.path.commonpath 可以处理这种情况
-    return os.path.commonpath([p, parent]) == str(parent)
+    if os.path.splitdrive(p)[0].casefold() != os.path.splitdrive(parent)[0].casefold():
+        return False
+    return os.path.normcase(os.path.commonpath([p, parent])) == os.path.normcase(parent)
 
 
 def is_any_descendant(p: str | Path, *parents: str | Path) -> bool:

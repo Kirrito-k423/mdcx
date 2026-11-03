@@ -1,5 +1,4 @@
 import asyncio
-import os
 import time
 import traceback
 from pathlib import Path
@@ -795,48 +794,74 @@ def start_new_scrape(file_mode: FileMode, movie_list: list[Path] | None = None) 
 
 def get_remain_list() -> bool:
     """This function is intended to be sync."""
-    remain_list_path = resources.u("remain.txt")
-    if os.path.isfile(remain_list_path):
-        with open(remain_list_path, encoding="utf-8", errors="ignore") as f:
-            temp = f.read()
-            Flags.remain_list = [Path(path) for path in temp.split("\n") if path.strip()]
-            if Switch.REMAIN_TASK in manager.config.switch_on and len(Flags.remain_list):
-                box = QMessageBox(QMessageBox.Information, "继续刮削", "上次刮削未完成，是否继续刮削剩余任务？")
-                box.setStandardButtons(QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
-                box.button(QMessageBox.Yes).setText("继续刮削剩余任务")
-                box.button(QMessageBox.No).setText("从头刮削")
-                box.button(QMessageBox.Cancel).setText("取消")
-                box.setDefaultButton(QMessageBox.No)
-                reply = box.exec()
-                if reply == QMessageBox.Cancel:
-                    return True  # 不刮削
+    if Switch.REMAIN_TASK not in manager.config.switch_on:
+        return False
 
-                if reply == QMessageBox.Yes:
-                    movie_path = manager.config.media_path
-                    if movie_path == "":
-                        movie_path = manager.data_folder
-                    movie_path = Path(movie_path)
+    try:
+        lines = resources.u("remain.txt").read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return False
+    except (OSError, UnicodeError):
+        return _offer_fresh_scrape()
 
-                    temp_remain_path = Flags.remain_list[0]
-                    if not is_descendant(temp_remain_path, movie_path):
-                        box = QMessageBox(
-                            QMessageBox.Warning,
-                            "提醒",
-                            f"很重要！！请注意：\n当前待刮削目录：{movie_path}\n剩余任务文件路径：{temp_remain_path}\n剩余任务的文件路径，并不在当前待刮削目录中！\n剩余任务很可能是使用其他配置扫描的！\n请确认成功输出目录和失败目录是否正确！如果配置不正确，继续刮削可能会导致文件被移动到新配置的输出位置！\n是否继续刮削？",
-                        )
-                        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-                        box.button(QMessageBox.Yes).setText("继续")
-                        box.button(QMessageBox.No).setText("取消")
-                        box.setDefaultButton(QMessageBox.No)
-                        reply = box.exec()
-                        if reply == QMessageBox.No:
-                            return True
-                    signal.show_log_text(
-                        f"🍯 🍯 🍯 NOTE: 继续刮削未完成任务！！！ 剩余未刮削文件数量（{len(Flags.remain_list)})"
-                    )
-                    start_new_scrape(FileMode.Default, Flags.remain_list)
-                    return True
-    return False
+    remaining = [Path(line) for line in lines if line.strip()]
+    if not remaining:
+        return False
+
+    box = QMessageBox(QMessageBox.Information, "继续刮削", "上次刮削未完成，是否继续刮削剩余任务？")
+    box.setStandardButtons(QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+    box.button(QMessageBox.Yes).setText("继续刮削剩余任务")
+    box.button(QMessageBox.No).setText("从头刮削")
+    box.button(QMessageBox.Cancel).setText("取消")
+    box.setDefaultButton(QMessageBox.No)
+    reply = box.exec()
+    if reply == QMessageBox.No:
+        return False
+    if reply != QMessageBox.Yes:
+        return True
+
+    settings = get_movie_path_setting()
+    movie_path = settings.softlink_path if manager.config.scrape_softlink_path else settings.movie_path
+    try:
+        if any(not path.is_absolute() for path in remaining):
+            raise ValueError("剩余任务清单包含无效的绝对路径")
+        outside_path = None
+        for path in remaining:
+            if not is_descendant(path, movie_path) and outside_path is None:
+                outside_path = path
+    except (OSError, ValueError):
+        return _offer_fresh_scrape()
+
+    if outside_path is not None:
+        box = QMessageBox(
+            QMessageBox.Warning,
+            "提醒",
+            f"当前待刮削目录：{movie_path}\n剩余任务文件路径：{outside_path}\n"
+            "剩余任务包含当前待刮削目录之外的文件。请确认成功和失败输出目录是否正确，再继续刮削。",
+        )
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        box.button(QMessageBox.Yes).setText("继续")
+        box.button(QMessageBox.No).setText("取消")
+        box.setDefaultButton(QMessageBox.No)
+        if box.exec() != QMessageBox.Yes:
+            return True
+
+    signal.show_log_text(f"🍯 🍯 🍯 NOTE: 继续刮削未完成任务！！！ 剩余未刮削文件数量（{len(remaining)}）")
+    start_new_scrape(FileMode.Default, remaining)
+    return True
+
+
+def _offer_fresh_scrape() -> bool:
+    signal.show_traceback_log(traceback.format_exc())
+    signal.show_log_text(" ⚠️ 无法读取或验证剩余任务清单，已取消恢复。")
+    box = QMessageBox(
+        QMessageBox.Warning, "无法恢复剩余任务", "剩余任务清单无法读取或包含无效路径。是否从当前目录重新扫描？"
+    )
+    box.setStandardButtons(QMessageBox.Yes | QMessageBox.Cancel)
+    box.button(QMessageBox.Yes).setText("从头刮削")
+    box.button(QMessageBox.Cancel).setText("取消")
+    box.setDefaultButton(QMessageBox.Cancel)
+    return box.exec() != QMessageBox.Yes
 
 
 def again_search() -> None:
