@@ -290,7 +290,11 @@ async def movie_lists(ignore_dirs: list[Path], media_type: list[str], movie_path
 
                     # 判断清理文件
                     path = root / f
-                    if CleanAction.AUTO_CLEAN in manager.config.clean_enable and need_clean(path, f, file_ext):
+                    if (
+                        not manager.config.download_guard.enabled
+                        and CleanAction.AUTO_CLEAN in manager.config.clean_enable
+                        and need_clean(path, f, file_ext)
+                    ):
                         result, error_info = delete_file_sync(path)
                         if result:
                             signal.show_log_text(f" 🗑 Clean: {path} ")

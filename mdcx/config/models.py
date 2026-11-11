@@ -92,7 +92,17 @@ class FieldConfig(BaseModel):
     )
 
 
+class DownloadGuardConfig(BaseModel):
+    enabled: bool = Field(default=False, title="刮削前检查下载完整性")
+    url: str = Field(default="", title="qBittorrent WebUI 地址")
+    path_mappings: dict[str, str] = Field(default_factory=dict, title="NAS 路径到本机路径的映射")
+    settle_seconds: int = Field(default=30, ge=0, title="下载完成后的等待秒数")
+    username_env: str = Field(default="MDCX_QBITTORRENT_USERNAME", title="登录用户名的环境变量")
+    password_env: str = Field(default="MDCX_QBITTORRENT_PASSWORD", title="登录密码的环境变量")
+
+
 class Config(BaseModel):
+    download_guard: DownloadGuardConfig = Field(default_factory=DownloadGuardConfig, title="下载完整性检查")
     model_config = ConfigDict()
     # region: General Settings
     media_path: str = ServerPathDirectory("./media", title="媒体路径", initial_path=SAFE_DIRS[0].as_posix())

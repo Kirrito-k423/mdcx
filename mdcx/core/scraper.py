@@ -37,6 +37,7 @@ from ..utils import executor, get_current_time, get_real_time, get_used_time, sp
 from ..utils.dataclass import update
 from ..utils.file import copy_file_async, move_file_async
 from ..utils.path import is_descendant
+from .download_guard import DownloadGuard, DownloadNotReady
 from .file import creat_folder, deal_old_files, get_file_info_v2, get_output_name, move_movie
 from .file_crawler import FileScraper
 from .image import add_mark
@@ -71,11 +72,13 @@ class Scraper:
         self.crawler_provider = crawler_provider
         self.file_scraper = FileScraper(manager.config, crawler_provider)
         self._number_locks: dict[str, asyncio.Lock] = {}
+        self.download_guard = DownloadGuard(manager.config.download_guard)
 
     async def run(self, file_mode: FileMode, movie_list: list[Path] | None) -> None:
         try:
             await self._run(file_mode, movie_list)
         finally:
+            await self.download_guard.close()
             await self.crawler_provider.close()
 
     async def _run(self, file_mode: FileMode, movie_list: list[Path] | None) -> None:
@@ -124,6 +127,23 @@ class Scraper:
             movie_list = await get_movie_list(file_mode, movie_path, ignore_dirs)
         else:
             signal.show_log_text("\n ⏰ Start time: " + time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+        if manager.config.download_guard.enabled:
+            await self.download_guard.prepare(movie_list)
+            ready = []
+            for path in movie_list:
+                if reason := await self.download_guard.reason(path):
+                    Flags.download_skipped += 1
+                    signal.show_log_text(f" ⏭ 跳过未确认完整的下载：{path}\n    {reason}")
+                else:
+                    ready.append(path)
+            movie_list = ready
+            signal.show_log_text(f" 🛡 下载完整性检查：可刮削 {len(ready)}，跳过 {Flags.download_skipped}（源文件保留）")
+            if not movie_list:
+                Flags.remain_list = []
+                Flags.can_save_remain = False
+                signal.show_scrape_info(f"⏭ 本轮没有确认下载完整的视频，已跳过 {Flags.download_skipped} 个")
+                signal.reset_buttons_status.emit()
+                return
         Flags.remain_list = movie_list
         Flags.can_save_remain = True
 
@@ -164,7 +184,8 @@ class Scraper:
                 return
 
         signal.show_log_text("================================================================================")
-        await _clean_empty_fodlers(movie_path, file_mode)
+        if not manager.config.download_guard.enabled:
+            await _clean_empty_fodlers(movie_path, file_mode)
         end_time = time.time()
         used_time = str(round((end_time - Flags.start_time), 2))
         average_time = str(round((end_time - Flags.start_time) / task_count, 2)) if task_count else used_time
@@ -176,6 +197,8 @@ class Scraper:
         signal.show_log_text(
             f" 🎉🎉🎉 All finished!!! Total {task_count} , Success {Flags.succ_count} , Failed {Flags.fail_count} "
         )
+        if Flags.download_skipped:
+            signal.show_log_text(f" ⏭ 未确认完整而跳过：{Flags.download_skipped}（未计入失败，未移动源文件）")
         signal.show_log_text("================================================================================")
         if Flags.failed_list:
             signal.show_log_text("    *** Failed results ****")
@@ -279,7 +302,7 @@ class Scraper:
             f"正在刮削： {Flags.scrape_started}/{count_all} {progress_percentage} \n {file_show_path}"
         )
         signal.label_result.emit(
-            f" 刮削中：{Flags.scrape_started - Flags.succ_count - Flags.fail_count} 成功：{Flags.succ_count} 失败：{Flags.fail_count}"
+            f" 刮削中：{Flags.scrape_started - Flags.scrape_done} 成功：{Flags.succ_count} 失败：{Flags.fail_count}"
         )
         LogBuffer.log().write("\n" + "👆" * 50)
         LogBuffer.log().write("\n 🙈 [file] " + str(file_info.file_path))
@@ -295,13 +318,19 @@ class Scraper:
         # 获取刮削数据
         json_data = None
         other = None
+        download_skip = ""
         try:
             json_data, other = await self._process_one_file(file_info, file_mode)
+            if not (json_data and other):
+                await self.download_guard.ensure_ready(file_path)
             if json_data and other:
                 if manager.config.main_mode == 4:
                     number = json_data.number  # 读取模式且存在nfo时，可能会导致movie_number改变，需要更新
                 Flags.json_data_dic.update({number: ScrapeResult(file_info, json_data, other)})
+        except DownloadNotReady as e:
+            download_skip = str(e)
         except Exception as e:
+            download_skip = await self.download_guard.reason(file_path, refresh=True)
             self._check_stop(show_name)
             signal.show_traceback_log(traceback.format_exc())
             signal.show_log_text(traceback.format_exc())
@@ -312,7 +341,10 @@ class Scraper:
         try:
             show_data = ShowData.empty()
             show_data.file_info = file_info
-            if json_data and other:
+            if download_skip:
+                Flags.download_skipped += 1
+                signal.show_log_text(f" ⏭ 下载状态已改变，取消整理：{file_path}\n    {download_skip}")
+            elif json_data and other:
                 show_data.data = json_data
                 show_data.other = other
                 Flags.succ_count += 1
@@ -445,6 +477,7 @@ class Scraper:
         read_mode = manager.config.read_mode
         file_escape_size = float(manager.config.file_size)
         file_path = file_info.file_path
+        await self.download_guard.ensure_ready(file_path)
 
         # 获取文件信息
         movie_number = file_info.number
@@ -626,6 +659,7 @@ class Scraper:
 
         # 判断输出文件夹和文件是否已存在，如无则创建输出文件夹
         other = OtherInfo.empty()
+        await self.download_guard.ensure_ready(file_path)
         if not await creat_folder(
             other,
             res,
@@ -654,6 +688,7 @@ class Scraper:
         # 视频模式（仅根据刮削数据把电影命名为番号并分类到对应目录名称的文件夹下）
         if manager.config.main_mode == 2:
             # 移动文件
+            await self.download_guard.ensure_ready(file_path)
             if await move_movie(other, file_info, file_path, file_new_path):
                 if Switch.SORT_DEL in manager.config.switch_on:
                     await deal_old_files(
@@ -738,6 +773,7 @@ class Scraper:
         await move_other_file(res.number, folder_old_path, folder_new_path, file_name, naming_rule)
 
         # 移动文件
+        await self.download_guard.ensure_ready(file_path)
         if not await move_movie(other, file_info, file_path, file_new_path):
             return None, None
         await save_success_list(file_path, file_new_path)  # 保存成功列表

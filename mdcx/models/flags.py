@@ -48,6 +48,7 @@ class _Flags:
     scrape_done: int = 0  # 已完成刮削数量
     succ_count: int = 0  # 成功数量
     fail_count: int = 0  # 失败数量
+    download_skipped: int = 0  # 未完成下载，保留源文件
     # 所有文件最终输出路径的字典（如已存在，则视为重复文件，直接跳过）
     file_new_path_dic: dict[Path, list[Path]] = field(default_factory=dict)
     # 当前文件的图片最终输出路径的字典（如已存在，则最终图片文件视为已处理过）
@@ -96,6 +97,7 @@ class _Flags:
         self.scrape_done = 0
         self.succ_count = 0
         self.fail_count = 0
+        self.download_skipped = 0
         self.file_new_path_dic = {}
         self.pic_catch_set = set()
         self.file_done_dic = {}

@@ -42,3 +42,24 @@ Windows 7 上需使用 Python 3.8 构建, 代码及依赖均兼容, 可在本地
 * 使用本软件时请遵守当地法律法规
 * 法律及使用后果由使用者自己承担
 * 禁止将本软件用于任何的商业用途
+
+## 下载完整性检查（qBittorrent）
+
+可在配置 JSON 中启用检查。刮削前读取 qBittorrent 的任务和文件进度；只有任务与文件均达到 100%、任务状态正常、实际大小一致且稳定至少 30 秒才进入刮削。校验、移动、下载、丢失文件、未匹配的文件，以及连接失败均按“跳过”处理，不计入失败，不移动到失败目录。移动前再次读取状态。
+
+例如，NAS 的 /downloads 映射为 Windows 的 D:/Downloads：
+
+```json
+{
+  "download_guard": {
+    "enabled": true,
+    "url": "http://127.0.0.1:8080",
+    "path_mappings": {"/downloads": "D:/Downloads"},
+    "settle_seconds": 30
+  }
+}
+```
+
+需要登录时，通过 MDCX_QBITTORRENT_USERNAME 和 MDCX_QBITTORRENT_PASSWORD 环境变量配置。此功能不修改 qBittorrent 的任务；启用后会停止扫描时的自动文件清理与刮削后的空目录清理。下载完成的分片记录不能替代重新校验磁盘损坏。已完成且仍由 qBittorrent 做种的文件，建议使用复制或硬链接模式整理以保留做种路径。
+
+进度字段见 [qBittorrent WebUI API](https://github.com/qbittorrent/qBittorrent/wiki/WebUI-API-(qBittorrent-4.1)#get-torrent-contents)。
