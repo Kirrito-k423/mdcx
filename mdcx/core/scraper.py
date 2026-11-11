@@ -69,6 +69,8 @@ class StopScrape(Exception): ...
 class Scraper:
     def __init__(self, crawler_provider: "CrawlerProviderProtocol"):
         self.crawler_provider = crawler_provider
+        self.file_scraper = FileScraper(manager.config, crawler_provider)
+        self._number_locks: dict[str, asyncio.Lock] = {}
 
     async def run(self, file_mode: FileMode, movie_list: list[Path] | None) -> None:
         try:
@@ -426,6 +428,17 @@ class Scraper:
     async def _process_one_file(
         self, file_info: FileInfo, file_mode: FileMode
     ) -> tuple[CrawlersResult | None, OtherInfo | None]:
+        # A failed first part must release the other parts as well as a successful one.
+        async with self._number_locks.setdefault(file_info.number, asyncio.Lock()):
+            result = await self._process_one_file_unlocked(file_info, file_mode)
+            data, other = result
+            if data and other:
+                Flags.json_data_dic[file_info.number] = ScrapeResult(file_info, data, other)
+            return result
+
+    async def _process_one_file_unlocked(
+        self, file_info: FileInfo, file_mode: FileMode
+    ) -> tuple[CrawlersResult | None, OtherInfo | None]:
         # 处理单个文件刮削
         # 初始化所需变量
         start_time = time.time()
@@ -501,19 +514,6 @@ class Scraper:
                 # 启用"允许(使用本地 nfo)更新 nfo 文件"时
                 update_nfo = True
 
-        # 刮削json_data
-        # 获取已刮削的json_data
-        if "." in movie_number or file_info.mosaic in ["国产"]:
-            pass
-        elif movie_number not in Flags.json_get_set:
-            # 第一次遇到该番号，刮削
-            Flags.json_get_set.add(movie_number)
-        elif not Flags.json_data_dic.get(movie_number):
-            # 已经获取过该番号的json_data（如同一番号的其他集），但已刮削字典中找不到，说明第一次遇到它的线程还没刮削完，等它结束。
-            # todo 修改此处实现, 不要对分集启动多个刮削任务
-            while not Flags.json_data_dic.get(movie_number):
-                await asyncio.sleep(1)
-
         pre_data = Flags.json_data_dic.get(movie_number)
         # 已存在该番号数据时直接使用该数据
         if pre_data and "." not in movie_number and file_info.mosaic not in ["国产"]:
@@ -558,8 +558,11 @@ class Scraper:
             # ========================= call crawlers =========================
             # res = await crawl(file_info.crawl_task(), file_mode)
 
-            scraper = FileScraper(manager.config, self.crawler_provider)
-            res = await scraper.run(file_info.crawl_task(), file_mode)
+            res = await self.file_scraper.run(file_info.crawl_task(), file_mode)
+            if not res.title:
+                LogBuffer.log().write(res.site_log + "\n 📒 字段来源" + res.field_log)
+                LogBuffer.error().write("所有元数据来源均未返回标题，已取消本文件的整理")
+                return None, None
             # 处理 FileInfo 和 CrawlersResult 的共同字段, 即 number/mosaic/letters
             # todo 理想情况, crawl 后应该以 res 为准, 后续不应再访问 file_info 的相关字段
             # todo 注意, 实际上目前各 crawler 返回的 mosaic 和 number 字段并未被使用

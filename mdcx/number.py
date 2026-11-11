@@ -134,7 +134,11 @@ def get_file_number(filepath: str, escape_string_list: list[str]) -> str:
     )
 
     # 提取番号
-    if "MYWIFE" in filename and re.search(r"NO\.\d*", filename):  # 提取 mywife No.1111
+    if r := re.search(r"(?<![A-Z0-9])(?:13DSVR(\d{5})|3DSVR-?(\d{3,5}))(?!\d)", filename):
+        # FANZA's vendor prefix 1 belongs to the CID, while 3 belongs to 3DSVR.
+        return f"3DSVR-{int(r[1] or r[2]):03d}"
+
+    elif "MYWIFE" in filename and re.search(r"NO\.\d*", filename):  # 提取 mywife No.1111
         temp_num = re.findall(r"NO\.(\d*)", filename)[0]
         return f"Mywife No.{temp_num}"
 

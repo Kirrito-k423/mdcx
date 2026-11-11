@@ -32,7 +32,7 @@ class CrawlerProvider:
         async with self.lock:
             if site not in self.instances:
                 use_browser = self.config.get_site_config(site).use_browser
-                if use_browser and self.browser is None:
+                if use_browser and self.browser is None and site != Website.DMM:
                     self.browser = await self.browser_provider.get_browser()
                 crawler_cls = get_crawler_compat(site)
                 self.instances[site] = crawler_cls(
@@ -40,6 +40,8 @@ class CrawlerProvider:
                     base_url=self.config.get_site_url(site),
                     browser=self.browser,
                 )
+                if use_browser and site == Website.DMM:
+                    self.instances[site].browser_factory = self.browser_provider.get_browser
         return self.instances[site]
 
     async def close(self):

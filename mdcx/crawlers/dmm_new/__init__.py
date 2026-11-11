@@ -1,5 +1,6 @@
 import re
 from collections import defaultdict
+from collections.abc import Awaitable, Callable
 from typing import override
 
 from parsel import Selector
@@ -30,6 +31,111 @@ class DmmCrawler(GenericBaseCrawler[DMMContext]):
     def __init__(self, client: AsyncWebClient, base_url: str = "", browser: Browser | None = None):
         super().__init__(client, base_url, browser)
         self.browser_context = None
+        self.browser_factory: Callable[[], Awaitable[Browser]] | None = None
+
+    @staticmethod
+    def video_cids(number: str) -> list[str]:
+        match = re.fullmatch(r"(\d*[a-z]+)-?(\d+)", number.lower())
+        if not match:
+            return []
+        prefix, digits = match.groups()
+        if prefix in ("3dsvr", "dsvr", "13dsvr"):
+            prefix = "13dsvr"
+        return [f"{prefix}{int(digits):05d}"]
+
+    @override
+    async def _run(self, ctx: DMMContext):
+        # The current FANZA video API avoids obsolete search-page markup and browser startup.
+        if not ctx.input.appoint_url:
+            for cid in self.video_cids(ctx.input.number):
+                data = await self.fetch_video(ctx, cid)
+                if data is not None:
+                    return data.to_result()
+            for cid in await self.search_video(ctx):
+                data = await self.fetch_video(ctx, cid)
+                if data is not None:
+                    return data.to_result()
+        return await super()._run(ctx)
+
+    async def search_video(self, ctx: DMMContext) -> list[str]:
+        query = """query MDCxSearch($word: String!) {
+          legacySearchPPV(limit: 10, floor: AV, sort: RECOMMENDED,
+            queryWord: $word, includeExplicit: true) { result { contents { id } } }
+        }"""
+        match = re.fullmatch(r"(\d*[a-z]+)-?(\d+)", ctx.input.number.lower())
+        if not match:
+            return []
+        prefix, digits = match.groups()
+        word = self.video_cids(ctx.input.number)[0]
+        response, _ = await self.async_client.post_json(
+            "https://api.video.dmm.co.jp/graphql", json_data={"query": query, "variables": {"word": word}}
+        )
+        result = (((response or {}).get("data") or {}).get("legacySearchPPV") or {}).get("result") or {}
+        # Ignore fuzzy search hits for other products. Vendor prefixes are not part of the number.
+        pattern = rf"(?:h_\d+|n_\d+|\d*)?{re.escape(prefix)}0*{int(digits)}"
+        return [item["id"] for item in result.get("contents") or [] if re.fullmatch(pattern, item.get("id", ""))][:3]
+
+    async def fetch_video(self, ctx: DMMContext, cid: str) -> CrawlerData | None:
+        query = """query MDCxContent($id: ID!) {
+          ppvContent(id: $id) {
+            id title description makerContentId duration deliveryStartDate
+            packageImage { largeUrl mediumUrl }
+            sampleImages { imageUrl largeImageUrl }
+            sample2DMovie { highestMovieUrl } sampleVRMovie { highestMovieUrl }
+            wishlistCount
+            actresses { name } directors { name } maker { name } label { name }
+            series { name } genres { name }
+          }
+          reviewSummary(contentId: $id) { average }
+        }"""
+        response, error = await self.async_client.post_json(
+            "https://api.video.dmm.co.jp/graphql",
+            json_data={"query": query, "variables": {"id": cid}},
+        )
+        content = ((response or {}).get("data") or {}).get("ppvContent")
+        if not content or not content.get("title") or content.get("id") != cid:
+            ctx.debug(f"FANZA video API 没有匹配结果: {cid} {error}")
+            return None
+        image = content.get("packageImage") or {}
+        release = (content.get("deliveryStartDate") or "")[:10]
+
+        def names(key):
+            return [item["name"] for item in content.get(key) or [] if item.get("name")]
+
+        url = f"https://video.dmm.co.jp/av/content/?id={cid}"
+        return CrawlerData(
+            number=ctx.input.number,
+            source=self.site().value,
+            title=content["title"],
+            originaltitle=content["title"],
+            outline=content.get("description") or "",
+            originalplot=content.get("description") or "",
+            actors=names("actresses"),
+            directors=names("directors"),
+            all_actors=names("actresses"),
+            score=str(((response or {}).get("data", {}).get("reviewSummary") or {}).get("average") or ""),
+            wanted=str(content.get("wishlistCount") or ""),
+            trailer=(content.get("sample2DMovie") or {}).get("highestMovieUrl")
+            or (content.get("sampleVRMovie") or {}).get("highestMovieUrl")
+            or "",
+            studio=(content.get("maker") or {}).get("name", ""),
+            publisher=(content.get("label") or {}).get("name", ""),
+            series=(content.get("series") or {}).get("name", ""),
+            tags=names("genres"),
+            release=release,
+            year=release[:4],
+            runtime=str(int(content.get("duration") or 0) // 60),
+            thumb=image.get("largeUrl") or "",
+            poster=image.get("mediumUrl") or image.get("largeUrl") or "",
+            extrafanart=[
+                item.get("largeImageUrl") or item.get("imageUrl")
+                for item in content.get("sampleImages") or []
+                if item.get("largeImageUrl") or item.get("imageUrl")
+            ],
+            image_download=True,
+            externalId=url,
+            url=url,
+        )
 
     @override
     async def close(self):
@@ -263,6 +369,8 @@ class DmmCrawler(GenericBaseCrawler[DMMContext]):
 
     @override
     async def _fetch_detail(self, ctx: DMMContext, url: str) -> tuple[str | None, str]:
+        if self.browser is None and self.browser_factory is not None:
+            self.browser = await self.browser_factory()
         if parse_category(url) not in (Category.DIGITAL):
             return await super()._fetch_detail(ctx, url)
         if self.browser is None:

@@ -1,6 +1,7 @@
 import asyncio
 import os
 import re
+from copy import deepcopy
 from itertools import chain
 from typing import TYPE_CHECKING
 
@@ -106,9 +107,29 @@ class FileScraper:
     def __init__(self, config: "Config", crawler_provider: "CrawlerProviderProtocol"):
         self.config = config
         self.crawler_provider = crawler_provider
+        self._requests: dict[tuple, asyncio.Task[CrawlerResponse]] = {}
 
     async def _call_crawler(
         self, task_input: CrawlerInput, website: Website, timeout: float | None = 30
+    ) -> CrawlerResponse:
+        # Cache metadata for the batch, including failures, so CD parts don't repeat searches.
+        key = (
+            website,
+            task_input.number,
+            task_input.short_number,
+            task_input.appoint_url,
+            task_input.language,
+            task_input.org_language,
+            task_input.mosaic,
+            # ThePornDB may hash the individual media file.
+            str(task_input.file_path) if website == Website.THEPORNDB else "",
+        )
+        if key not in self._requests:
+            self._requests[key] = asyncio.create_task(self._fetch_crawler(deepcopy(task_input), website, timeout))
+        return deepcopy(await asyncio.shield(self._requests[key]))
+
+    async def _fetch_crawler(
+        self, task_input: CrawlerInput, website: Website, timeout: float | None
     ) -> CrawlerResponse:
         """
         调用指定网站的爬虫函数

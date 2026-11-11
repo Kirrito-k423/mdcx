@@ -172,6 +172,7 @@ async def move_movie(other: OtherInfo, file_info: FileInfo, file_path: Path, fil
             file_info.file_path = file_new_path
             return True
         LogBuffer.log().write(f"\n 🔴 移动视频文件到成功文件夹失败!\n    {error_info}")
+        LogBuffer.error().write(f"移动视频文件失败：{error_info}")
         return False
 
 
@@ -483,12 +484,13 @@ async def get_file_info_v2(file_path: Path, copy_sub: bool = True) -> FileInfo:
         cd_path_2 = re.findall(r"-([0-9]{1,2})\.?$", temp_cd_filename)
         cd_path_3 = re.findall(r"(-|\d{2,}|\.)([a-o]{1})\.?$", temp_cd_filename)
         cd_path_4 = re.findall(r"-([0-9]{1})[^a-z0-9]", temp_cd_filename)
+        vr_part = re.search(r"(?:^|[-_ .])([a-o])(?=[-_ .](?:\d{3,4}p|[48]k|lr|180)(?:[-_ .]|$))", file_name.lower())
         if cd_path_1 and int(cd_path_1[0][1]) > 0:
             cd_part = cd_path_1[0][1]
         elif cd_path_2:
             if len(cd_path_2[0]) == 1 or CDChar.DIGITAL in cd_char:
                 cd_part = str(int(cd_path_2[0]))
-        elif cd_path_3 and CDChar.LETTER in cd_char:
+        elif (cd_path_3 or vr_part) and CDChar.LETTER in cd_char:
             letter_list = [
                 "",
                 "a",
@@ -518,8 +520,9 @@ async def get_file_info_v2(file_path: Path, copy_sub: bool = True) -> FileInfo:
                 "y",
                 "z",
             ]
-            if cd_path_3[0][1] != "c" or CDChar.ENDC in cd_char:
-                cd_part = str(letter_list.index(cd_path_3[0][1]))
+            letter = cd_path_3[0][1] if cd_path_3 else vr_part[1]
+            if letter != "c" or CDChar.ENDC in cd_char:
+                cd_part = str(letter_list.index(letter))
         elif cd_path_4 and CDChar.MIDDLE_NUMBER in cd_char:
             cd_part = str(int(cd_path_4[0]))
 
@@ -1033,9 +1036,9 @@ async def deal_old_files(
         signal.show_log_text(traceback.format_exc())
 
     # 更新图片地址
-    info.poster_path = poster_final_path if poster_exists and done_poster_path_copy else Path()
-    info.thumb_path = thumb_final_path if thumb_exists and done_thumb_path_copy else Path()
-    info.fanart_path = fanart_final_path if fanart_exists and done_fanart_path_copy else Path()
+    info.poster_path = poster_final_path if poster_exists and done_poster_path_copy else None
+    info.thumb_path = thumb_final_path if thumb_exists and done_thumb_path_copy else None
+    info.fanart_path = fanart_final_path if fanart_exists and done_fanart_path_copy else None
 
     # nfo 处理
     try:

@@ -1,4 +1,5 @@
 import asyncio
+import errno
 import os
 import shutil
 import subprocess
@@ -129,9 +130,18 @@ async def move_file_async(old: str | Path, new: str | Path):
     old = Path(old)
     new = Path(new)
     try:
-        if str(old).lower() != str(new).lower():
-            await delete_file_async(new)
-        await asyncio.to_thread(shutil.move, str(old), str(new))
+        if os.path.normcase(os.path.abspath(old)) == os.path.normcase(os.path.abspath(new)):
+            if not await aiofiles.os.path.exists(old):
+                raise FileNotFoundError(f"不存在: {old}")
+            return True, ""
+        try:
+            await asyncio.to_thread(os.replace, old, new)
+        except OSError as e:
+            # shutil.move copies the whole video on *any* rename error, including
+            # access denied. Only cross-device moves should fall back to copying.
+            if e.errno != errno.EXDEV and getattr(e, "winerror", None) != 17:
+                raise
+            await asyncio.to_thread(shutil.move, str(old), str(new))
         return True, ""
     except Exception as e:
         error_info = f" 移动文件: {old}\n 目标: {new} \n 错误: {e}\n{traceback.format_exc()}"
