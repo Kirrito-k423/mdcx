@@ -79,8 +79,7 @@ class MyMAinWindow(QMainWindow):
     set_javbus_cookie = pyqtSignal(str)  # 加载javbus cookie文本内容到设置页面
     set_javbus_status = pyqtSignal(str)  # javbus 检查状态更新
     set_label_file_path = pyqtSignal(str)  # 主界面更新路径信息显示
-    set_pic_pixmap = pyqtSignal(list, list)  # 主界面显示封面、缩略图
-    set_pic_text = pyqtSignal(str)  # 主界面显示封面信息
+    set_pic_pixmap = pyqtSignal(int, list, list, str)  # 携带版本号，丢弃过期图片
     change_to_mainpage = pyqtSignal(str)  # 切换到主界面
     label_result = pyqtSignal(str)
     pushButton_start_cap = pyqtSignal(str)
@@ -107,6 +106,7 @@ class MyMAinWindow(QMainWindow):
         self.new_version = "\n🔍 点击检查最新版本"  # 有版本更新时在左下角显示的新版本信息
         self.show_data: ShowData | None = None  # 当前树状图选中文件的数据
         self.img_path = None  # 当前树状图选中文件的图片地址
+        self._pic_generation = 0
         self.m_drag = False  # 允许鼠标拖动的标识
         self.m_DragPosition: QPoint  # 鼠标拖动位置
         self.logs_counts = 0  # 日志次数（每1w次清屏）
@@ -798,6 +798,11 @@ class MyMAinWindow(QMainWindow):
         self.json_array[show_data.show_name] = show_data
 
     def set_main_info(self, show_data: "ShowData | None"):
+        self._pic_generation += 1
+        pic_generation = self._pic_generation
+        self.Ui.label_poster.setText("暂无封面图")
+        self.Ui.label_thumb.setText("暂无缩略图")
+        self.Ui.label_poster_size.setText("")
         if show_data is not None:
             self.show_data = show_data
             file_info = show_data.file_info
@@ -873,7 +878,7 @@ class MyMAinWindow(QMainWindow):
                 poster_from = data.poster_from
                 cover_from = data.thumb_from
                 if poster_path and thumb_path:
-                    executor.submit(self._set_pixmap(poster_path, thumb_path, poster_from, cover_from))
+                    executor.submit(self._set_pixmap(poster_path, thumb_path, poster_from, cover_from, pic_generation))
         except Exception:
             if not signal_qt.stop:
                 signal_qt.show_traceback_log(traceback.format_exc())
@@ -884,6 +889,7 @@ class MyMAinWindow(QMainWindow):
         thumb_path: Path,
         poster_from="",
         cover_from="",
+        generation=0,
     ):
         poster_pix = [False, "", "暂无封面图", 156, 220]
         thumb_pix = [False, "", "暂无缩略图", 328, 220]
@@ -895,10 +901,12 @@ class MyMAinWindow(QMainWindow):
         # self.Ui.label_poster_size.setText(poster_pix[2] + '  ' + thumb_pix[2])
         poster_text = poster_pix[2] if poster_pix[2] != "暂无封面图" else ""
         thumb_text = thumb_pix[2] if thumb_pix[2] != "暂无缩略图" else ""
-        self.set_pic_text.emit((poster_text + " " + thumb_text).strip())
-        self.set_pic_pixmap.emit(poster_pix, thumb_pix)
+        self.set_pic_pixmap.emit(generation, poster_pix, thumb_pix, (poster_text + " " + thumb_text).strip())
 
-    def resize_label_and_setpixmap(self, poster_pix, thumb_pix):
+    def resize_label_and_setpixmap(self, generation, poster_pix, thumb_pix, text):
+        if generation != self._pic_generation:
+            return
+        self.Ui.label_poster_size.setText(text)
         self.Ui.label_poster.resize(poster_pix[3], poster_pix[4])
         self.Ui.label_thumb.resize(thumb_pix[3], thumb_pix[4])
 

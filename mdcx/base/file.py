@@ -511,6 +511,9 @@ async def newtdisk_creat_symlink(
 async def move_file_to_failed_folder(failed_folder: Path, file_path: Path, folder_old_path: Path) -> Path:
     # 更新模式、读取模式，不移动失败文件；不移动文件-关时，不移动； 软硬链接开时，不移动
     main_mode = manager.config.main_mode
+    if manager.config.download_guard.enabled:
+        LogBuffer.log().write(f"\n ⏭ 下载保护已启用，刮削失败的原文件保留在原位: {file_path}")
+        return file_path
     if main_mode == 3 or main_mode == 4 or not manager.config.failed_file_move or manager.config.soft_link != 0:
         LogBuffer.log().write(f"\n 🙊 [Movie] {file_path}")
         return file_path

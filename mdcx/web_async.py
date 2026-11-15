@@ -9,6 +9,7 @@ import aiofiles
 import httpx
 from aiolimiter import AsyncLimiter
 from curl_cffi import AsyncSession, Response
+from curl_cffi.const import CurlECode
 from curl_cffi.requests.exceptions import ConnectionError, RequestException, Timeout
 from curl_cffi.requests.session import HttpMethod
 from curl_cffi.requests.utils import not_set
@@ -112,7 +113,7 @@ class AsyncWebClient:
             retry_count = self.retry
             error_msg = ""
             for attempt in range(retry_count):
-                # 采用保守的重试策略, 除特定状态码外不进行重试
+                # 只自动重试幂等请求，避免重复提交有副作用的 POST。
                 retry = False
                 try:
                     resp: Response = await self.curl_session.request(
@@ -133,6 +134,9 @@ class AsyncWebClient:
                         retry = resp.status_code in (
                             408,  # Request Timeout
                             429,  # Too Many Requests
+                            500,  # Internal Server Error
+                            502,  # Bad Gateway
+                            503,  # Service Unavailable
                             504,  # Gateway Timeout
                         )
                     else:
@@ -140,15 +144,25 @@ class AsyncWebClient:
                         return resp, ""
                 except Timeout:
                     error_msg = "连接超时"
+                    retry = True
                 except ConnectionError as e:
                     error_msg = f"连接错误: {str(e)}"
+                    retry = True
                 except RequestException as e:
                     error_msg = f"请求异常: {str(e)} {e.code}"
+                    retry = e.code in {
+                        CurlECode.COULDNT_RESOLVE_HOST,
+                        CurlECode.COULDNT_CONNECT,
+                        CurlECode.OPERATION_TIMEDOUT,
+                        CurlECode.GOT_NOTHING,
+                        CurlECode.SEND_ERROR,
+                        CurlECode.RECV_ERROR,
+                    }
                 except Exception as e:
                     error_msg = f"curl-cffi 异常: {str(e)}"
-                if not retry:
-                    break
                 self.log_fn(f"🔴 {method} {url} 失败: {error_msg} ({attempt + 1}/{retry_count})")
+                if not retry or method.upper() not in ("GET", "HEAD"):
+                    break
                 # 重试前等待
                 if attempt < retry_count - 1:
                     await asyncio.sleep(attempt * 3 + 2)
@@ -288,7 +302,9 @@ class AsyncWebClient:
         self.log_fn(f"🔴 获取文件大小失败: {url} HTTP {response.status_code}")
         return None
 
-    async def download(self, url: str, file_path: Path, *, use_proxy: bool = True) -> bool:
+    async def download(
+        self, url: str, file_path: Path, *, use_proxy: bool = True, on_error: Callable[[str], None] | None = None
+    ) -> bool:
         """
         下载文件. 当文件较大时分块下载
 
@@ -300,11 +316,12 @@ class AsyncWebClient:
         Returns:
             bool: 下载是否成功
         """
-        # 获取文件大小
-        file_size = await self.get_filesize(url, use_proxy=use_proxy)
+        # 图片直接下载，避免额外的 HEAD 请求及服务端不支持 HEAD 导致的等待。
+        is_image = file_path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
+        file_size = None if is_image else await self.get_filesize(url, use_proxy=use_proxy)
         # 判断是不是webp文件
         webp = False
-        if file_path.suffix == "jpg" and ".webp" in url:
+        if file_path.suffix.lower() in {".jpg", ".jpeg"} and ".webp" in url.lower():
             webp = True
 
         MB = 1024**2
@@ -315,6 +332,8 @@ class AsyncWebClient:
         content, error = await self.get_content(url, use_proxy=use_proxy)
         if not content:
             self.log_fn(f"🔴 下载失败: {url} {error}")
+            if on_error:
+                on_error(error or "下载内容为空")
             return False
         if not webp:
             try:
@@ -323,6 +342,8 @@ class AsyncWebClient:
                 return True
             except Exception as e:
                 self.log_fn(f"🔴 文件写入失败: {url} {file_path} {str(e)}")
+                if on_error:
+                    on_error(f"文件写入失败: {e}")
                 return False
         try:
             byte_stream = BytesIO(content)
@@ -334,6 +355,8 @@ class AsyncWebClient:
             return True
         except Exception as e:
             self.log_fn(f"🔴 WebP转换失败: {url} {file_path} {str(e)}")
+            if on_error:
+                on_error(f"WebP转换失败: {e}")
             return False
 
     async def _download_chunks(self, url: str, file_path: Path, file_size: int, use_proxy: bool = True) -> bool:

@@ -257,7 +257,6 @@ def Init_Singal(self: "MyMAinWindow"):
     self.set_javbus_cookie.connect(self.Ui.plainTextEdit_cookie_javbus.setPlainText)
     self.set_javbus_status.connect(self.Ui.label_javbus_cookie_result.setText)
     self.set_pic_pixmap.connect(self.resize_label_and_setpixmap)
-    self.set_pic_text.connect(self.Ui.label_poster_size.setText)
     self.change_to_mainpage.connect(self.change_mainpage)
     # endregion
 

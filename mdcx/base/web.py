@@ -396,12 +396,15 @@ async def download_file_with_filepath(url: str, file_path: Path, folder_new_path
 
     if not await aiofiles.os.path.exists(folder_new_path):
         await aiofiles.os.makedirs(folder_new_path)
+    errors = []
     try:
-        if await manager.computed.async_client.download(url, file_path):
+        if await manager.computed.async_client.download(url, file_path, on_error=errors.append):
             return True
-    except Exception:
-        pass
+    except Exception as e:
+        errors.append(str(e))
     LogBuffer.log().write(f"\n 🥺 Download failed! {url}")
+    if errors:
+        LogBuffer.log().write(f"\n    原因: {errors[-1]}")
     return False
 
 
