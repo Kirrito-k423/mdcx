@@ -26,7 +26,7 @@ MAIN_PATH 是唯一硬编码的路径, 其定义如下:
 - 从源代码运行时, 表示 main.py 所在目录
 - 运行 pyinstaller 打包的程序时
     - 在 macOS 上表示 `~/.mdcx`
-    - 在 Windows 上表示工作目录, 当直接双击运行 exe 时即为 exe 所在目录
+    - 在 Windows 上表示 exe 所在目录，不依赖启动时的工作目录
 
 此路径的作用是, 该目录下有一个文件 (MDCx.config),
 此文件中存储一个绝对路径, 指向当前启用的配置文件,
@@ -40,10 +40,15 @@ try:  # 从源代码运行时, 为 main.py 所在目录, 根据此文件路径�
 except Exception:
     MAIN_PATH = Path(sys.path[0]).resolve()
 
+def packaged_main_path(executable: str, is_mac: bool) -> Path:
+    """Keep the selected configuration stable when a launcher changes the working directory."""
+    return Path("~").expanduser() / ".mdcx" if is_mac else Path(executable).resolve().parent
+
+
 if IS_PYINSTALLER:
     if IS_MAC:
         MAIN_PATH = Path("~").expanduser() / ".mdcx"
     else:
-        MAIN_PATH = Path("").resolve()
+        MAIN_PATH = packaged_main_path(sys.executable, IS_MAC)
 
 MARK_FILE = MAIN_PATH / "MDCx.config"

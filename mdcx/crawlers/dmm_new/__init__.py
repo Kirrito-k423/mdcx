@@ -41,6 +41,8 @@ class DmmCrawler(GenericBaseCrawler[DMMContext]):
         prefix, digits = match.groups()
         if prefix in ("3dsvr", "dsvr", "13dsvr"):
             prefix = "13dsvr"
+        elif prefix == "tmavr":
+            prefix = "55tmavr"
         return [f"{prefix}{int(digits):05d}"]
 
     @override
