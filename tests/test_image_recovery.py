@@ -12,7 +12,9 @@ from mdcx.web_async import AsyncWebClient
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", [ConnectionError("offline"), Timeout("timeout"), RequestException("reset", code=56)])
+@pytest.mark.parametrize(
+    "failure", [ConnectionError("offline"), Timeout("timeout"), RequestException("reset", code=56)]
+)
 async def test_transient_network_errors_retry(failure):
     client = AsyncWebClient(timeout=1, retry=3)
     response = SimpleNamespace(status_code=200, headers={})

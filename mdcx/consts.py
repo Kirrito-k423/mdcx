@@ -2,7 +2,7 @@ import platform
 import sys
 from pathlib import Path
 
-LOCAL_VERSION = 220250832
+LOCAL_VERSION = 220261115
 
 os_name = platform.system()
 mac_ver = platform.mac_ver()[0]
@@ -39,6 +39,7 @@ try:  # 从源代码运行时, 为 main.py 所在目录, 根据此文件路径�
         MAIN_PATH = MAIN_PATH.parent
 except Exception:
     MAIN_PATH = Path(sys.path[0]).resolve()
+
 
 def packaged_main_path(executable: str, is_mac: bool) -> Path:
     """Keep the selected configuration stable when a launcher changes the working directory."""

@@ -21,6 +21,8 @@ env:
 
 jobs:
     init-matrix:
+        # Do not attach legacy builds to the fork's v2 hotfix releases.
+        if: ${{ github.event_name != 'release' || !startsWith(github.event.release.tag_name, 'v2.0.0-fix.') }}
         runs-on: ubuntu-latest
         outputs:
             matrix: ${{ steps.set-matrix.outputs.matrix }}

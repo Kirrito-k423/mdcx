@@ -11,6 +11,8 @@ on:
 
 jobs:
   init-matrix:
+    # Fork hotfix releases attach their separately validated Windows build.
+    if: ${{ github.event_name != 'release' || !startsWith(github.event.release.tag_name, 'v2.0.0-fix.') }}
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}

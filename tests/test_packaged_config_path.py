@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from mdcx.consts import packaged_main_path
 from mdcx.crawlers.dmm_new import DmmCrawler
 
